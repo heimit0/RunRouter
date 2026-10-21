@@ -1,0 +1,39 @@
+# Self-hosted OSRM (foot profile) as an alternative to the public demo.
+#
+#  1. Edit OSRM_PBF_URL below to a Geofabrik extract near you
+#     (see https://download.geofabrik.de/).
+#  2. docker compose -f docker-compose.osrm.yml up --build
+#  3. Run RunRouter against it:
+#       OSRM_BASE_URL=http://localhost:5000 uv run runrouter
+services:
+  osrm:
+    image: osrm/osrm-backend
+    container_name: runrouter-osrm
+    ports:
+      - "5000:5000"
+    volumes:
+      - osrm-data:/data
+    environment:
+      OSRM_PBF_URL: https://download.geofabrik.de/europe/germany/brandenburg-latest.osm.pbf
+      OSRM_REGION: region
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        OSRM="/data/$${OSRM_REGION}.osrm"
+        if [ ! -f "$${OSRM}" ]; then
+          echo "Downloading PBF..."
+          curl -L -o /data/$${OSRM_REGION}.osm.pbf "$${OSRM_PBF_URL}"
+          echo "Extracting (foot profile)..."
+          osrm-extract -p /opt/foot.lua /data/$${OSRM_REGION}.osm.pbf
+          echo "Partitioning..."
+          osrm-partition "$${OSRM}"
+          echo "Customizing..."
+          osrm-customize "$${OSRM}"
+        fi
+        echo "Serving on :5000"
+        exec osrm-routed --algorithm mld "$${OSRM}"
+
+volumes:
+  osrm-data:

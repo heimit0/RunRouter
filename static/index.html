@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RunRouter — Laufstrecken-Finder</title>
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h1>RunRouter</h1>
+      <p class="sub">Laufstrecken auf OpenStreetMap</p>
+
+      <div class="field">
+        <label for="search">Startpunkt</label>
+        <input id="search" type="text" placeholder="Adresse oder Ort suchen …" autocomplete="off">
+        <div id="search-results"></div>
+        <p class="hint">… oder direkt in die Karte klicken.</p>
+      </div>
+
+      <div class="field">
+        <label for="length">Länge: <span id="length-label">5 km</span></label>
+        <input id="length" type="range" min="1" max="30" step="0.5" value="5">
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="route-type">Streckenform</label>
+          <select id="route-type">
+            <option value="loop">Rundkurs</option>
+            <option value="out_and_back">Hin &amp; zurück</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="prefer">Vorliebe</label>
+          <select id="prefer">
+            <option value="balanced">Ausgewogen</option>
+            <option value="green">Grünflächen / Parks</option>
+            <option value="water">Am Wasser</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="count">Anzahl Routen</label>
+        <select id="count">
+          <option value="3" selected>3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+        </select>
+      </div>
+
+      <button id="generate">Routen generieren</button>
+      <div id="status" class="status"></div>
+
+      <div id="route-list"></div>
+    </aside>
+    <div id="map"></div>
+  </div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

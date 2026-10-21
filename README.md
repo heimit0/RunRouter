@@ -31,6 +31,9 @@ uv sync
 uv run runrouter            # serves on http://127.0.0.1:8010
 ```
 
+Requires Python 3.11–3.13 (pinned via `.python-version`; Python 3.14 breaks
+editable installs, see `.pth` regression in its `site` module).
+
 Open http://127.0.0.1:8010, click a start point on the map (or search an
 address), set the length and preferences, then hit **Routen generieren**.
 

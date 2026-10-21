@@ -1,17 +1,24 @@
 """Route generation: turn a start point + preferences into ranked running loops.
 
-The core idea: a loop of road length ``L`` is roughly a polygon of via-points
-placed on a circle of radius ``r ≈ L/8`` around the start. OSRM routes through
-those points and back to the start; we measure the resulting distance and
-iteratively rescale ``r`` until the loop is within tolerance of the target.
+How a loop is made
+------------------
+A loop of road length ``L`` is approximated as a polygon of via-points placed
+on a circle of radius ``r`` around the start (or, for green/water preferences,
+around a point shifted toward nearby nature areas). OSRM routes through those
+points and back to the start.
 
-Preferences:
-  * ``route_type``: "loop" (round course) or "out_and_back" (there and back).
-  * ``prefer``:     "balanced", "green" (bias toward parks/forest), "water"
-                    (bias toward rivers/lakes). Bias steers waypoints toward
-                    nearby nature-area centroids (from Overpass).
-  * ``count``:      how many distinct routes to return (fanned out in different
-                    directions).
+The mapping from radius to road length is not smooth — in real cities the road
+network quantizes achievable loop lengths (placing a waypoint 200 m vs 400 m
+out can land on the same ring road and produce the *same* loop). We therefore:
+
+  1. probe the area once to estimate its "winding factor" (road length per unit
+     of straight-line loop perimeter), then
+  2. target each route's radius with that factor, measuring and refining
+     deterministically (fixed angles, no jitter) so refinement stays monotonic.
+
+Routes are ranked by how close they land to the target length (plus a small
+bonus for green/water preference), so the user always gets the nearest
+achievable loops with their real distances shown.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from . import green
 from .routing import OSRMClient, RoutingError
 
 EARTH_R = 6_371_000.0
+_TOLERANCE = 0.12
 
 
 @dataclass
@@ -95,92 +103,108 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * EARTH_R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def _loop_via_points(
-    start: tuple[float, float],
+def _perimeter_factor(k: int) -> float:
+    """Straight-line perimeter of a regular k-gon with circumradius 1."""
+    return 2 * k * math.sin(math.pi / k)
+
+
+def _shape(
+    center: tuple[float, float],
     radius_m: float,
     theta0: float,
     k: int,
-    bias: Sequence[dict[str, Any]],
-    bias_prob: float,
-    rng: random.Random,
 ) -> list[tuple[float, float]]:
-    lat, lon = start
-    points: list[tuple[float, float]] = []
-    bias_index = 0
-    for i in range(k):
-        if bias and rng.random() < bias_prob:
-            area = bias[bias_index % len(bias)]
-            bias_index += 1
-            points.append((area["lat"], area["lon"]))
-            continue
-        angle = theta0 + 360.0 * i / k + rng.uniform(-8, 8)
-        radius = radius_m * rng.uniform(0.85, 1.15)
-        points.append(_offset(lat, lon, angle, radius))
-    return points
+    """Deterministic k points on a circle of ``radius_m`` around ``center``."""
+    clat, clon = center
+    return [
+        _offset(clat, clon, theta0 + 360.0 * i / k, radius_m) for i in range(k)
+    ]
 
 
-def _bias_areas(
-    areas: Sequence[dict[str, Any]],
+def _bias_center(
     start: tuple[float, float],
+    areas: Sequence[dict[str, Any]],
     prefer: str,
     target_m: float,
-) -> list[dict[str, Any]]:
+) -> tuple[float, float] | None:
+    """Point to shift the loop toward for green/water preferences, or None."""
     if prefer not in ("green", "water"):
-        return []
+        return None
     want = "water" if prefer == "water" else "green"
     candidates = [a for a in areas if a["kind"] == want]
     if not candidates and prefer == "water":
         candidates = [a for a in areas if a["kind"] == "green"]
-    max_dist = target_m * 0.7
-    return [
+    if not candidates:
+        return None
+
+    nearby = [
         a
         for a in candidates
-        if _haversine(start[0], start[1], a["lat"], a["lon"]) <= max_dist
+        if _haversine(start[0], start[1], a["lat"], a["lon"]) <= target_m * 0.7
     ]
+    if not nearby:
+        return None
+
+    clat = sum(a["lat"] for a in nearby) / len(nearby)
+    clon = sum(a["lon"] for a in nearby) / len(nearby)
+    return (
+        start[0] + (clat - start[0]) * 0.4,
+        start[1] + (clon - start[1]) * 0.4,
+    )
+
+
+async def _probe_winding(client: OSRMClient, start: tuple[float, float], target_m: float) -> float:
+    """Estimate how many metres of road one metre of loop perimeter produces."""
+    radius = target_m / 8.0
+    via = _shape(start, radius, 0.0, 4)
+    data = await client.route([start] + via + [start])
+    dist = float(data["routes"][0]["distance"])
+    straight = _perimeter_factor(4) * radius
+    return dist / max(straight, 1.0)
 
 
 async def _make_loop(
     client: OSRMClient,
     start: tuple[float, float],
+    center: tuple[float, float],
     target_m: float,
-    bias: Sequence[dict[str, Any]],
-    bias_prob: float,
     theta0: float,
-    rng: random.Random,
     k: int,
+    winding: float,
     max_attempts: int = 3,
 ) -> tuple[float, list[tuple[float, float]], float] | None:
-    radius = target_m / 8.0
+    radius = target_m / (_perimeter_factor(k) * max(winding, 1.0))
+    radius = max(30.0, min(radius, target_m * 0.5))
+
     best: tuple[float, list[tuple[float, float]], float] | None = None
     for _ in range(max_attempts):
-        via = _loop_via_points(start, radius, theta0, k, bias, bias_prob, rng)
+        via = _shape(center, radius, theta0, k)
         coords = [start] + via + [start]
         try:
             data = await client.route(coords)
         except RoutingError:
-            radius *= 0.7
+            radius *= 0.8
             continue
 
         route = data["routes"][0]
         geom = route.get("geometry", {}).get("coordinates", [])
         if len(geom) < 2:
-            radius *= 0.7
+            radius *= 0.8
             continue
 
         coords_ll = [(lat, lon) for lon, lat in geom]
         dist = float(route.get("distance", 0.0))
         dur = float(route.get("duration", 0.0))
-        waypoints = data.get("waypoints", [])
-        max_snap = max((w.get("distance", 0.0) for w in waypoints), default=0.0)
 
         candidate = (dist, coords_ll, dur)
         if best is None or abs(dist - target_m) < abs(best[0] - target_m):
             best = candidate
 
-        if dist > 0 and abs(dist - target_m) / target_m < 0.12 and max_snap < 500:
+        if dist > 0 and abs(dist - target_m) / target_m < _TOLERANCE:
             return candidate
 
-        radius *= (target_m / max(dist, 1.0)) ** 0.6
+        radius *= (target_m / max(dist, 1.0)) ** 0.9
+        radius = max(20.0, min(radius, target_m * 0.6))
 
     return best
 
@@ -188,28 +212,44 @@ async def _make_loop(
 async def _make_out_and_back(
     client: OSRMClient,
     start: tuple[float, float],
+    center: tuple[float, float] | None,
     target_m: float,
-    bias: Sequence[dict[str, Any]],
-    bias_prob: float,
     theta0: float,
-    rng: random.Random,
+    max_attempts: int = 3,
 ) -> tuple[float, list[tuple[float, float]], float] | None:
     lat, lon = start
-    half = target_m / 2.0
-    dest = _offset(lat, lon, theta0, half)
-    if bias and rng.random() < bias_prob:
-        area = rng.choice(bias)
-        dest = (area["lat"], area["lon"])
+    out = target_m / 4.0
 
-    data = await client.route([start, dest])
-    route = data["routes"][0]
-    geom = route.get("geometry", {}).get("coordinates", [])
-    if len(geom) < 2:
-        return None
+    best: tuple[float, list[tuple[float, float]], float] | None = None
+    for _ in range(max_attempts):
+        dest = center if center else _offset(lat, lon, theta0, out)
+        try:
+            data = await client.route([start, dest])
+        except RoutingError:
+            out *= 0.8
+            continue
 
-    out = [(la, lo) for lo, la in geom]
-    full = out + list(reversed(out))
-    return route["distance"] * 2, full, route["duration"] * 2
+        route = data["routes"][0]
+        geom = route.get("geometry", {}).get("coordinates", [])
+        if len(geom) < 2:
+            out *= 0.8
+            continue
+
+        one_way = [(la, lo) for lo, la in geom]
+        full = one_way + list(reversed(one_way))
+        total = float(route["distance"]) * 2
+        dur = float(route["duration"]) * 2
+
+        candidate = (total, full, dur)
+        if best is None or abs(total - target_m) < abs(best[0] - target_m):
+            best = candidate
+
+        if abs(total - target_m) / target_m < _TOLERANCE:
+            return candidate
+
+        out *= (target_m / max(total, 1.0)) ** 0.9
+
+    return best
 
 
 def _green_score(
@@ -241,6 +281,15 @@ def _score(dist_m: float, target_m: float, green_score: float, prefer: str) -> f
     return score
 
 
+async def _safe_nature(lat: float, lon: float, radius_m: float) -> list[dict[str, Any]]:
+    try:
+        return await asyncio.wait_for(
+            green.nature_areas(lat, lon, radius_m), timeout=12.0
+        )
+    except Exception:
+        return []
+
+
 async def generate_routes(
     client: OSRMClient,
     start: tuple[float, float],
@@ -248,21 +297,27 @@ async def generate_routes(
     route_type: str = "loop",
     prefer: str = "balanced",
     count: int = 3,
-    concurrency: int = 2,
+    concurrency: int = 3,
 ) -> list[Route]:
     """Generate ``count`` running routes of roughly ``length_km`` from ``start``."""
     target_m = length_km * 1000.0
     rng = random.Random()
 
-    try:
-        areas = await green.nature_areas(
-            start[0], start[1], min(target_m * 0.9, 15_000.0)
-        )
-    except Exception:
-        areas = []
+    # Green-space discovery and winding probe run concurrently (both are slow
+    # external calls and are independent of each other).
+    nature_task = asyncio.create_task(
+        _safe_nature(start[0], start[1], min(target_m * 0.9, 15_000.0))
+    )
+    winding_task = asyncio.create_task(_probe_winding(client, start, target_m))
 
-    bias = _bias_areas(areas, start, prefer, target_m)
-    bias_prob = 0.6 if bias else 0.0
+    areas = await nature_task
+    try:
+        winding = await winding_task
+    except Exception:
+        winding = 6.0  # sane urban default if the probe fails
+
+    center = _bias_center(start, areas, prefer, target_m)
+    loop_center = center or start
 
     semaphore = asyncio.Semaphore(concurrency)
     angles = [
@@ -272,13 +327,9 @@ async def generate_routes(
     async def one(index: int, theta: float) -> tuple[float, list[tuple[float, float]], float] | None:
         async with semaphore:
             if route_type == "out_and_back":
-                return await _make_out_and_back(
-                    client, start, target_m, bias, bias_prob, theta, rng
-                )
-            k = 3 + (index % 3)  # vary loop shape: triangle/square/pentagon
-            return await _make_loop(
-                client, start, target_m, bias, bias_prob, theta, rng, k
-            )
+                return await _make_out_and_back(client, start, center, target_m, theta)
+            k = 3 + (index % 3)  # triangle/square/pentagon for variety
+            return await _make_loop(client, start, loop_center, target_m, theta, k, winding)
 
     results = await asyncio.gather(
         *[one(i, theta) for i, theta in enumerate(angles)]

@@ -144,7 +144,7 @@ app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 def main() -> None:
     import uvicorn
 
-    uvicorn.run("runrouter.main:app", host="127.0.0.1", port=8000)
+    uvicorn.run("runrouter.main:app", host=config.HOST, port=config.PORT)
 
 
 if __name__ == "__main__":

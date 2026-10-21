@@ -39,3 +39,7 @@ OVERPASS_URLS = [
 ]
 
 HTTP_TIMEOUT = float(_env("HTTP_TIMEOUT", "30"))
+
+# --- Web server --------------------------------------------------------------
+HOST = _env("RUNROUTER_HOST", "127.0.0.1")
+PORT = int(_env("RUNROUTER_PORT", "8010"))

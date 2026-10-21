@@ -1,0 +1,14 @@
+{
+  "name": "runrouter",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RunRouter browser e2e tests (Playwright)",
+  "scripts": {
+    "e2e": "playwright test --project=mock",
+    "e2e:real": "playwright test --project=real"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5"
+  }
+}

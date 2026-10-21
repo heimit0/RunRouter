@@ -28,16 +28,22 @@ directions.
 ```bash
 cd RunRouter
 uv sync
-uv run runrouter            # serves on http://127.0.0.1:8000
+uv run runrouter            # serves on http://127.0.0.1:8010
 ```
 
-Open http://127.0.0.1:8000, click a start point on the map (or search an
+Open http://127.0.0.1:8010, click a start point on the map (or search an
 address), set the length and preferences, then hit **Routen generieren**.
 
 > The default routing backend is the public OSRM demo server
 > (`router.project-osrm.org`, foot profile) — free, no key, but demo-grade and
 > rate-limited. For reliable use, self-host OSRM (below) and point RunRouter at
 > it.
+>
+> The requested length is a *target*, not a guarantee: real road networks
+> quantize achievable loop lengths, so RunRouter returns the nearest loops and
+> always shows their actual distance. The "green"/"water" preference depends on
+> the Overpass API; if Overpass is down, routes are still generated (just
+> without green biasing/scoring).
 
 ## Routing backend (public vs. self-hosted)
 
@@ -83,8 +89,15 @@ region to match your area (the example uses Brandenburg, Germany).
 
 ```bash
 uv run pytest                 # backend unit tests (mocked, deterministic)
-npx playwright test           # browser e2e (mock OSRM responses)
+
+# browser e2e (uses system Chrome, no download):
+npm install                   # installs @playwright/test
+npm run e2e                   # deterministic mock tests
+npm run e2e:real              # real test against live OSRM (needs network)
 ```
+
+The web server host/port are configurable via `RUNROUTER_HOST` /
+`RUNROUTER_PORT` (default `127.0.0.1:8010`).
 
 ## Project layout
 

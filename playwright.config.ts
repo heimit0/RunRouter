@@ -26,7 +26,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'uv run runrouter',
+    command: 'uv run python -m runrouter.main',
     url: 'http://127.0.0.1:8010/api/health',
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,

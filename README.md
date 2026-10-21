@@ -28,11 +28,16 @@ directions.
 ```bash
 cd RunRouter
 uv sync
-uv run runrouter            # serves on http://127.0.0.1:8010
+uv run python -m runrouter.main   # serves on http://127.0.0.1:8010
 ```
 
-Requires Python 3.11–3.13 (pinned via `.python-version`; Python 3.14 breaks
-editable installs, see `.pth` regression in its `site` module).
+Requires Python 3.11–3.13 (pinned via `.python-version`).
+
+> The app is started via `python -m` (not the `runrouter` console script) because
+> on macOS, `uv` marks `.venv` files with the `UF_HIDDEN` flag and Python's
+> `site.py` skips hidden `.pth` files — which breaks *editable* installs, so the
+> console script's `import runrouter` fails. `python -m` resolves the package
+> from the working directory and is unaffected.
 
 Open http://127.0.0.1:8010, click a start point on the map (or search an
 address), set the length and preferences, then hit **Routen generieren**.

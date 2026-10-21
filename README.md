@@ -15,13 +15,14 @@ RunRouter combines three free, keyless OSM services:
 | Green data  | [Overpass](https://overpass-api.de)   | discover parks, forests and water |
 
 Route generation: a loop of road length `L` is approximated as a polygon of
-waypoints placed on a circle of radius `r ≈ L/8` around the start. OSRM routes
-through those points and back; the resulting distance is measured and `r` is
-iteratively rescaled until the loop is within tolerance. For "green"/"water"
-preferences, waypoints are biased toward nearby nature-area centroids (from
-Overpass) and each finished route is scored by how green it is. Routes are
-ranked by distance fit (+ green bonus) and returned fanned out in different
-directions.
+waypoints placed on a circle around the start. OSRM routes through those points
+and back. Because the road→length mapping is not smooth (real road networks
+quantize achievable loop lengths), RunRouter first probes the area once to
+estimate its local "winding factor", then targets each route's radius with that
+factor and refines deterministically. For "green"/"water" preferences, waypoints
+are biased toward nearby nature-area centroids (from Overpass) and each finished
+route is scored by how green it is. Routes are ranked by distance fit (+ green
+bonus) and returned fanned out in different directions.
 
 ## Quick start
 
@@ -62,7 +63,7 @@ OSRM_BASE_URL=https://router.project-osrm.org   # default (public demo)
 OSRM_PROFILE=foot                                # running/walking
 
 # self-hosted:
-OSRM_BASE_URL=http://localhost:5000 uv run runrouter
+OSRM_BASE_URL=http://localhost:5000 uv run python -m runrouter.main
 ```
 
 To self-host OSRM with the foot profile, either use Docker Compose
